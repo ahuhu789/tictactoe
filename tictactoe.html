@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Cờ Caro Đa Năng - AI & PvP</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+    body {
+        font-family: 'Nunito', sans-serif;
+        background-color: #f8fafc; /* Slate-50 */
+        touch-action: manipulation;
+        overscroll-behavior: none;
+    }
+    
+    /* Hiệu ứng X/O xuất hiện */
+    @keyframes popIn {
+        0% { transform: scale(0.5); opacity: 0; }
+        70% { transform: scale(1.2); }
+        100% { transform: scale(1); opacity: 1; }
+    }
+    
+    .cell-content {
+        animation: popIn 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+
+    /* Container cho bàn cờ có thể cuộn */
+    .board-scroll-container {
+        overflow: auto;
+        max-width: 100%;
+        max-height: 75vh; /* Giới hạn chiều cao để không đẩy UI khác */
+        display: flex;
+        justify-content: center; /* Căn giữa nếu bàn cờ nhỏ */
+        align-items: flex-start;
+        padding: 4px;
+        border-radius: 8px;
+        /* Tùy chỉnh thanh cuộn cho đẹp */
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e1 #f1f5f9;
+    }
+    
+    .board-scroll-container::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    .board-scroll-container::-webkit-scrollbar-track {
+        background: #f1f5f9; 
+    }
+    .board-scroll-container::-webkit-scrollbar-thumb {
+        background-color: #cbd5e1; 
+        border-radius: 4px;
+    }
+
+    /* Lưới game */
+    .game-grid {
+        display: grid;
+        gap: 1px; /* Đường kẻ giữa các ô */
+        background-color: #94a3b8; /* Màu đường kẻ */
+        border: 1px solid #94a3b8;
+        border-radius: 4px;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        flex-shrink: 0; /* Không bị co lại trong flex container */
+    }
+
+    /* Ô cờ */
+    .cell {
+        background-color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        font-weight: 900;
+        cursor: pointer;
+        user-select: none;
+        position: relative;
+        /* Đảm bảo ô vuông */
+        aspect-ratio: 1/1; 
+    }
+
+    /* Loại bỏ hover trên mobile để tránh dính màu */
+    @media (hover: hover) {
+        .cell:hover:not(.filled) {
+            background-color: #f1f5f9;
+        }
+    }
+
+    .cell.filled {
+        cursor: default;
+        background-color: #fff;
+    }
+
+    /* Highlight thắng/thua/nước đi cuối */
+    .cell.highlight {
+        background-color: #bbf7d0 !important; /* Green-200 */
+    }
+    .cell.highlight .text-x { color: #14532d !important; }
+    .cell.highlight .text-o { color: #064e3b !important; }
+
+    .cell.last-move {
+        background-color: #fef9c3; /* Yellow-100 */
+    }
+    /* Dấu hiệu nước đi cuối (chấm nhỏ) */
+    .cell.last-move::after {
+        content: '';
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 6px;
+        height: 6px;
+        background-color: #eab308; /* Yellow-500 */
+        border-radius: 50%;
+    }
+
+    /* Màu chữ */
+    .text-x { 
+        color: #ef4444; /* Red-500 */
+        filter: drop-shadow(1px 1px 0px rgba(239, 68, 68, 0.2));
+    } 
+    .text-o { 
+        color: #3b82f6; /* Blue-500 */
+        filter: drop-shadow(1px 1px 0px rgba(59, 130, 246, 0.2));
+    }
+
+    /* Modal */
+    .btn-option.selected {
+        background-color: #1e293b; /* Slate-800 */
+        color: white;
+        border-color: #1e293b;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .modal-overlay {
+        background-color: rgba(15, 23, 42, 0.8);
+        backdrop-filter: blur(4px);
+    }
+</style>
+</head>
+<body class="h-screen flex flex-col text-slate-800 overflow-hidden">
+
+    <!-- Header -->
+    <header class="pt-4 pb-2 px-4 flex-none z-10 bg-f8fafc shadow-sm">
+        <div class="max-w-md mx-auto text-center">
+            <h1 class="text-2xl font-bold text-slate-700 leading-tight">Cờ Caro</h1>
+            <div class="flex justify-between items-center mt-2 text-xs font-semibold text-slate-500 px-2">
+                <span id="mode-display">PvE</span>
+                <span id="size-display">10x10</span>
+            </div>
+            
+            <!-- Score Board -->
+            <div class="mt-2 flex items-center justify-center gap-6 bg-white px-6 py-2 rounded-full shadow border border-slate-200 mx-auto w-fit">
+                <div class="flex flex-col items-center w-12">
+                    <span id="p1-label" class="text-xs font-bold text-slate-400 uppercase">Bạn</span>
+                    <span id="p1-badge" class="text-2xl font-black text-x leading-none">X</span>
+                </div>
+                <div class="text-slate-300 text-2xl font-light">vs</div>
+                <div class="flex flex-col items-center w-12">
+                    <span id="p2-label" class="text-xs font-bold text-slate-400 uppercase">Máy</span>
+                    <span id="p2-badge" class="text-2xl font-black text-o leading-none">O</span>
+                </div>
+            </div>
+            
+            <div id="status-msg" class="mt-2 h-6 text-sm font-bold text-blue-600 flex items-center justify-center">
+                <!-- Status text here -->
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Game Area -->
+    <main class="flex-1 relative w-full flex flex-col items-center justify-center overflow-hidden bg-slate-50">
+        <!-- Board Container -->
+        <div class="board-scroll-container w-full px-2" id="board-wrapper">
+            <div id="board" class="game-grid mx-auto">
+                <!-- Cells generated by JS -->
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="p-4 flex-none bg-white border-t border-slate-200 z-10">
+        <div class="max-w-md mx-auto flex gap-3">
+            <button onclick="showIntro()" class="flex-1 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 active:scale-95 transition">
+                Cài đặt
+            </button>
+            <button onclick="resetBoard()" class="flex-1 py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-700 active:scale-95 transition shadow-lg shadow-slate-300">
+                Chơi lại
+            </button>
+        </div>
+    </footer>
+
+    <!-- Intro / Settings Modal -->
+    <div id="intro-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-overlay p-4">
+        <div class="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden transform transition-all scale-100 max-h-[90vh] flex flex-col">
+            <div class="bg-slate-800 p-6 text-center">
+                <h2 class="text-2xl font-black text-white tracking-wide">THIẾT LẬP</h2>
+                <p class="text-slate-400 text-sm mt-1">Tùy chỉnh trận đấu của bạn</p>
+            </div>
+            
+            <div class="p-6 overflow-y-auto">
+                <!-- Kích thước -->
+                <div class="mb-6">
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Kích thước bàn cờ</label>
+                    <div class="grid grid-cols-4 gap-2">
+                        <button onclick="selectSize(3)" class="btn-option size-opt py-2 rounded-lg border-2 border-slate-100 font-bold text-slate-600 text-sm hover:border-slate-300" data-val="3">3x3</button>
+                        <button onclick="selectSize(5)" class="btn-option size-opt py-2 rounded-lg border-2 border-slate-100 font-bold text-slate-600 text-sm hover:border-slate-300" data-val="5">5x5</button>
+                        <button onclick="selectSize(10)" class="btn-option size-opt py-2 rounded-lg border-2 border-slate-100 font-bold text-slate-600 text-sm hover:border-slate-300 selected" data-val="10">10x10</button>
+                        <button onclick="selectSize(20)" class="btn-option size-opt py-2 rounded-lg border-2 border-slate-100 font-bold text-slate-600 text-sm hover:border-slate-300" data-val="20">20x20</button>
+                    </div>
+                    <p id="rule-hint" class="text-xs text-slate-400 mt-2 text-center italic">Luật thắng: 4 ô liên tiếp</p>
+                </div>
+
+                <!-- Chế độ -->
+                <div class="mb-6">
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Chế độ chơi</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="selectMode('pve')" class="btn-option mode-opt py-3 rounded-xl border-2 border-slate-100 font-bold text-slate-700 hover:border-slate-300 flex items-center justify-center gap-2 selected" data-val="pve">
+                            <span>🤖</span> Vs Máy
+                        </button>
+                        <button onclick="selectMode('pvp')" class="btn-option mode-opt py-3 rounded-xl border-2 border-slate-100 font-bold text-slate-700 hover:border-slate-300 flex items-center justify-center gap-2" data-val="pvp">
+                            <span>👥</span> 2 Người
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Phe -->
+                <div class="mb-6">
+                    <label class="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Chọn quân (X đi trước)</label>
+                    <div class="grid grid-cols-2 gap-3">
+                        <button onclick="selectSide('X')" class="btn-option side-opt py-3 rounded-xl border-2 border-slate-100 font-black text-xl text-red-500 hover:border-red-200 selected" data-val="X">X</button>
+                        <button onclick="selectSide('O')" class="btn-option side-opt py-3 rounded-xl border-2 border-slate-100 font-black text-xl text-blue-500 hover:border-blue-200" data-val="O">O</button>
+                    </div>
+                </div>
+
+                <button onclick="startGame()" class="w-full py-4 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-900 active:scale-95 transition shadow-xl shadow-slate-300 text-lg">
+                    VÀO TRẬN
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Result Modal -->
+    <div id="result-modal" class="fixed inset-0 z-50 flex items-center justify-center modal-overlay hidden p-4">
+        <div class="bg-white w-full max-w-xs p-6 rounded-3xl shadow-2xl text-center transform scale-100 transition-all">
+            <div id="result-icon" class="text-6xl mb-2 animate-bounce">🏆</div>
+            <h2 id="result-title" class="text-2xl font-black text-slate-800 mb-1">CHIẾN THẮNG!</h2>
+            <p id="result-message" class="text-slate-500 mb-6 font-medium text-sm">Chúc mừng bạn đã thắng.</p>
+            
+            <div class="flex flex-col gap-2">
+                <button onclick="resetBoard()" class="w-full py-3 bg-slate-800 text-white font-bold rounded-xl hover:bg-slate-700 shadow-lg">
+                    Chơi ván mới
+                </button>
+                <button onclick="showIntro()" class="w-full py-3 text-slate-500 font-bold hover:text-slate-700">
+                    Đổi cài đặt
+                </button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    /* ================= STATE VARIABLES ================= */
+    let SETTINGS = {
+        size: 10,
+        mode: 'pve', // 'pve' | 'pvp'
+        playerSide: 'X',
+        winLength: 4
+    };
+
+    let gameState = {
+        board: [],
+        gameActive: false,
+        currentPlayer: 'X',
+        moveCount: 0
+    };
+
+    const boardElement = document.getElementById('board');
+    const statusMsg = document.getElementById('status-msg');
+
+    /* ================= UI HANDLING (INTRO) ================= */
+    
+    function selectSize(size) {
+        SETTINGS.size = size;
+        SETTINGS.winLength = size === 3 ? 3 : (size === 5 ? 4 : (size >= 20 ? 5 : 4));
+        // 20x20 thường luật là 5 ô, nhưng user yêu cầu 4 thì giữ 4 cũng được. 
+        // Để cân bằng cho 20x20 ta có thể set là 5 ô thắng (chuẩn gomoku) hoặc giữ 4 theo yêu cầu.
+        // Ở đây giữ 4 theo prompt, nhưng 20x20 4 ô thì hơi dễ hòa/thắng nhanh. 
+        // Code dưới sẽ follow prompt là 4 ô thẳng hàng.
+        SETTINGS.winLength = size === 3 ? 3 : 4; 
+
+        document.getElementById('rule-hint').textContent = `Luật thắng: ${SETTINGS.winLength} ô liên tiếp`;
+        updateBtnStyles('size-opt', size);
+    }
+
+    function selectMode(mode) {
+        SETTINGS.mode = mode;
+        updateBtnStyles('mode-opt', mode);
+    }
+
+    function selectSide(side) {
+        SETTINGS.playerSide = side;
+        updateBtnStyles('side-opt', side);
+    }
+
+    function updateBtnStyles(className, value) {
+        document.querySelectorAll(`.${className}`).forEach(btn => {
+            if (btn.dataset.val == value) btn.classList.add('selected', 'border-transparent');
+            else btn.classList.remove('selected', 'border-transparent');
+        });
+    }
+
+    function showIntro() {
+        document.getElementById('intro-modal').classList.remove('hidden');
+        document.getElementById('result-modal').classList.add('hidden');
+    }
+
+    /* ================= GAME INITIALIZATION ================= */
+
+    function startGame() {
+        document.getElementById('intro-modal').classList.add('hidden');
+        
+        // Update Info Display
+        const modeText = SETTINGS.mode === 'pve' ? 'Người vs Máy' : 'Đối kháng';
+        document.getElementById('mode-display').textContent = modeText;
+        document.getElementById('size-display').textContent = `${SETTINGS.size}x${SETTINGS.size}`;
+
+        // Update Header Labels
+        const p1Label = document.getElementById('p1-label');
+        const p2Label = document.getElementById('p2-label');
+        const p1Badge = document.getElementById('p1-badge');
+        const p2Badge = document.getElementById('p2-badge');
+
+        if (SETTINGS.mode === 'pve') {
+            p1Label.textContent = 'BẠN';
+            p1Badge.textContent = SETTINGS.playerSide;
+            p1Badge.className = `text-2xl font-black leading-none ${SETTINGS.playerSide==='X'?'text-x':'text-o'}`;
+            
+            p2Label.textContent = 'MÁY';
+            const aiSide = SETTINGS.playerSide === 'X' ? 'O' : 'X';
+            p2Badge.textContent = aiSide;
+            p2Badge.className = `text-2xl font-black leading-none ${aiSide==='X'?'text-x':'text-o'}`;
+        } else {
+            p1Label.textContent = 'P1';
+            p1Badge.textContent = 'X';
+            p1Badge.className = 'text-2xl font-black leading-none text-x';
+            
+            p2Label.textContent = 'P2';
+            p2Badge.textContent = 'O';
+            p2Badge.className = 'text-2xl font-black leading-none text-o';
+        }
+
+        resetBoard();
+    }
+
+    function resetBoard() {
+        document.getElementById('result-modal').classList.add('hidden');
+        gameState.board = new Array(SETTINGS.size * SETTINGS.size).fill('');
+        gameState.gameActive = true;
+        gameState.currentPlayer = 'X';
+        gameState.moveCount = 0;
+
+        // 1. Cấu hình Grid CSS
+        boardElement.style.gridTemplateColumns = `repeat(${SETTINGS.size}, 1fr)`;
+        
+        // 2. Tính toán kích thước ô (Cell Size Logic)
+        // Để đảm bảo ô luôn đủ lớn để bấm trên 20x20 và đẹp trên 3x3
+        let minCellSize = 35; // Kích thước tối thiểu cho mobile (px)
+        let fontSize = '1.2rem';
+
+        if (SETTINGS.size === 3) { minCellSize = 100; fontSize = '4rem'; }
+        else if (SETTINGS.size === 5) { minCellSize = 60; fontSize = '2.5rem'; }
+        else if (SETTINGS.size === 10) { minCellSize = 40; fontSize = '1.5rem'; }
+        else if (SETTINGS.size === 20) { minCellSize = 32; fontSize = '1rem'; }
+
+        // Áp dụng min-width cho board để kích hoạt scroll nếu cần
+        const boardWidth = minCellSize * SETTINGS.size;
+        boardElement.style.minWidth = `${boardWidth}px`;
+        boardElement.style.maxWidth = SETTINGS.size <= 10 ? '500px' : 'none'; // 3x3, 5x5, 10x10 giới hạn width cho đẹp, 20x20 thả lỏng
+        if (SETTINGS.size === 20) boardElement.style.width = `${boardWidth}px`; // Fix width cho bàn lớn
+        
+        // Reset Scroll
+        document.getElementById('board-wrapper').scrollLeft = 0;
+        document.getElementById('board-wrapper').scrollTop = 0;
+
+        // 3. Render Cells
+        boardElement.innerHTML = '';
+        for (let i = 0; i < SETTINGS.size * SETTINGS.size; i++) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            cell.style.fontSize = fontSize;
+            cell.dataset.index = i;
+            // Thêm thẻ span bên trong để animate nội dung
+            const content = document.createElement('span');
+            content.className = 'cell-content';
+            cell.appendChild(content);
+            
+            cell.addEventListener('click', handleCellClick);
+            boardElement.appendChild(cell);
+        }
+
+        updateStatus();
+
+        // AI đi trước nếu cần
+        if (SETTINGS.mode === 'pve' && SETTINGS.playerSide === 'O') {
+            statusMsg.textContent = "Máy đang tính...";
+            setTimeout(() => {
+                // Đánh giữa
+                const center = Math.floor((SETTINGS.size * SETTINGS.size) / 2);
+                // Điều chỉnh một chút cho bàn chẵn để AI không đánh quá cứng nhắc
+                const offset = SETTINGS.size % 2 === 0 ? -(SETTINGS.size / 2) : 0;
+                makeMove(center + offset, 'X'); 
+            }, 600);
+        }
+    }
+
+    /* ================= GAMEPLAY LOGIC ================= */
+
+    function updateStatus() {
+        if (!gameState.gameActive) return;
+        
+        const cur = gameState.currentPlayer;
+        let msg = `Lượt của ${cur}`;
+        
+        if (SETTINGS.mode === 'pve') {
+            if (cur === SETTINGS.playerSide) {
+                msg = "Lượt của BẠN";
+                statusMsg.classList.remove('text-slate-500');
+                statusMsg.classList.add(SETTINGS.playerSide === 'X' ? 'text-red-500' : 'text-blue-500');
+            } else {
+                msg = "Máy đang tính...";
+                statusMsg.className = "mt-2 h-6 text-sm font-bold text-slate-500 flex items-center justify-center animate-pulse";
+            }
+        } else {
+            msg = `Lượt người chơi ${cur}`;
+            statusMsg.className = `mt-2 h-6 text-sm font-bold flex items-center justify-center ${cur==='X' ? 'text-red-500' : 'text-blue-500'}`;
+        }
+        
+        statusMsg.textContent = msg;
+    }
+
+    function handleCellClick(e) {
+        // Xử lý click trúng span con hoặc div cha
+        const target = e.target.closest('.cell');
+        if (!target) return;
+        
+        const index = parseInt(target.dataset.index);
+
+        if (gameState.board[index] !== '' || !gameState.gameActive) return;
+        if (SETTINGS.mode === 'pve' && gameState.currentPlayer !== SETTINGS.playerSide) return;
+
+        makeMove(index, gameState.currentPlayer);
+    }
+
+    function makeMove(index, player) {
+        gameState.board[index] = player;
+        gameState.moveCount++;
+
+        // Update UI
+        const cell = document.querySelector(`.cell[data-index='${index}']`);
+        const content = cell.querySelector('.cell-content'); // Lấy span con
+        
+        content.textContent = player;
+        content.classList.add(player === 'X' ? 'text-x' : 'text-o');
+        cell.classList.add('filled');
+        
+        // Highlight last move
+        document.querySelectorAll('.last-move').forEach(c => c.classList.remove('last-move'));
+        cell.classList.add('last-move');
+
+        // Check Win
+        const winInfo = checkWin(gameState.board, player);
+        if (winInfo) {
+            endGame(player, winInfo);
+            return;
+        }
+
+        // Check Draw
+        if (gameState.moveCount === SETTINGS.size * SETTINGS.size) {
+            endGame('draw', null);
+            return;
+        }
+
+        // Switch Turn
+        gameState.currentPlayer = player === 'X' ? 'O' : 'X';
+        updateStatus();
+
+        // Trigger AI
+        if (SETTINGS.mode === 'pve' && gameState.currentPlayer !== SETTINGS.playerSide) {
+            setTimeout(() => {
+                const bestMove = getBestMove();
+                makeMove(bestMove, gameState.currentPlayer);
+            }, 250); // Delay nhỏ tạo cảm giác tự nhiên
+        }
+    }
+
+    function endGame(winner, winInfo) {
+        gameState.gameActive = false;
+        const modal = document.getElementById('result-modal');
+        const title = document.getElementById('result-title');
+        const msg = document.getElementById('result-message');
+        const icon = document.getElementById('result-icon');
+
+        if (winner === 'draw') {
+            title.textContent = "HÒA CỜ!";
+            title.className = "text-2xl font-black text-slate-500 mb-1";
+            msg.textContent = "Hai bên ngang tài ngang sức.";
+            icon.textContent = "🤝";
+        } else {
+            // Highlight Winning Line
+            winInfo.line.forEach(idx => {
+                const cell = document.querySelector(`.cell[data-index='${idx}']`);
+                if(cell) cell.classList.add('highlight');
+            });
+
+            if (SETTINGS.mode === 'pve') {
+                if (winner === SETTINGS.playerSide) {
+                    title.textContent = "CHIẾN THẮNG!";
+                    title.className = "text-2xl font-black text-green-600 mb-1";
+                    msg.textContent = "Bạn đã đánh bại AI xuất sắc!";
+                    icon.textContent = "🎉";
+                } else {
+                    title.textContent = "THẤT BẠI!";
+                    title.className = "text-2xl font-black text-red-500 mb-1";
+                    msg.textContent = "Máy chơi hay quá, thử lại nhé!";
+                    icon.textContent = "🤖";
+                }
+            } else {
+                title.textContent = `${winner} THẮNG!`;
+                title.className = `text-2xl font-black ${winner==='X'?'text-red-500':'text-blue-500'} mb-1`;
+                msg.textContent = `Chúc mừng người chơi ${winner}.`;
+                icon.textContent = "🏆";
+            }
+        }
+
+        setTimeout(() => {
+            modal.classList.remove('hidden');
+        }, 800);
+    }
+
+    /* ================= AI LOGIC (SCALABLE MINIMAX) ================= */
+
+    function getBestMove() {
+        // Nếu board quá trống ở lượt đầu, AI đánh random quanh giữa
+        if (gameState.moveCount < 2) {
+            let center = Math.floor((SETTINGS.size * SETTINGS.size) / 2);
+            // Tìm ô trống gần nhất
+            if (gameState.board[center] === '') return center;
+            // Nếu giữa bị chiếm, đánh xung quanh
+            let neighbors = [-1, 1, -SETTINGS.size, SETTINGS.size];
+            for (let offset of neighbors) {
+                if (gameState.board[center + offset] === '') return center + offset;
+            }
+        }
+
+        const aiPlayer = gameState.currentPlayer;
+        // Giảm độ sâu cho bàn cờ lớn để tránh lag
+        // 3x3: Full | 5x5: Depth 6 | 10x10: Depth 3 | 20x20: Depth 2
+        const depth = SETTINGS.size <= 3 ? 9 : (SETTINGS.size <= 5 ? 5 : (SETTINGS.size >= 20 ? 2 : 3));
+        
+        let bestScore = -Infinity;
+        let move = -1;
+        
+        // Chỉ xét các ô xung quanh các ô đã đánh (Optimization)
+        let candidates = getCandidateMoves(gameState.board);
+        
+        // Nếu quá nhiều candidates (vd bàn 20x20 giữa game), cắt bớt để đảm bảo hiệu năng
+        if (candidates.length > 25) {
+            // Shuffle và lấy 25 ô ngẫu nhiên trong số các ô khả thi (heuristic đơn giản)
+            // Thực tế nên dùng hàm đánh giá sơ bộ để sort, nhưng ở đây shuffle là đủ cho web game nhẹ
+            candidates.sort(() => Math.random() - 0.5); 
+            candidates = candidates.slice(0, 25);
+        }
+
+        for (let idx of candidates) {
+            gameState.board[idx] = aiPlayer;
+            let score = minimax(gameState.board, depth, -Infinity, Infinity, false, aiPlayer);
+            gameState.board[idx] = '';
+
+            if (score > bestScore) {
+                bestScore = score;
+                move = idx;
+            }
+        }
+        return move;
+    }
+
+    function minimax(simBoard, depth, alpha, beta, isMaximizing, aiPlayer) {
+        const humanPlayer = aiPlayer === 'X' ? 'O' : 'X';
+        
+        const winAI = checkWin(simBoard, aiPlayer);
+        if (winAI) return 100000 + depth; 
+        
+        const winHuman = checkWin(simBoard, humanPlayer);
+        if (winHuman) return -100000 - depth; 
+
+        if (depth === 0) return evaluateBoard(simBoard, aiPlayer);
+
+        const candidates = getCandidateMoves(simBoard);
+        if (candidates.length === 0) return 0; 
+
+        // Limit branching factor inside recursion too
+        let searchMoves = candidates;
+        if (candidates.length > 12 && SETTINGS.size > 5) {
+             searchMoves = candidates.slice(0, 12); 
+        }
+
+        if (isMaximizing) {
+            let maxEval = -Infinity;
+            for (let idx of searchMoves) {
+                simBoard[idx] = aiPlayer;
+                let ev = minimax(simBoard, depth - 1, alpha, beta, false, aiPlayer);
+                simBoard[idx] = '';
+                maxEval = Math.max(maxEval, ev);
+                alpha = Math.max(alpha, ev);
+                if (beta <= alpha) break;
+            }
+            return maxEval;
+        } else {
+            let minEval = Infinity;
+            for (let idx of searchMoves) {
+                simBoard[idx] = humanPlayer;
+                let ev = minimax(simBoard, depth - 1, alpha, beta, true, aiPlayer);
+                simBoard[idx] = '';
+                minEval = Math.min(minEval, ev);
+                beta = Math.min(beta, ev);
+                if (beta <= alpha) break;
+            }
+            return minEval;
+        }
+    }
+
+    function evaluateBoard(simBoard, player) {
+        let score = 0;
+        const size = SETTINGS.size;
+        const winLen = SETTINGS.winLength;
+        const directions = [{r:0, c:1}, {r:1, c:0}, {r:1, c:1}, {r:1, c:-1}];
+
+        // Chỉ quét vùng có quân để tối ưu
+        // Ở đây quét toàn bộ đơn giản, nhưng với 20x20 có thể hơi chậm.
+        // Optimization: Vì độ sâu thấp, hàm này gọi nhiều.
+        
+        for (let r = 0; r < size; r++) {
+            for (let c = 0; c < size; c++) {
+                const idx = r * size + c;
+                if (simBoard[idx] === '') continue;
+                
+                const isMe = simBoard[idx] === player;
+                const point = isMe ? 1 : -1.2; // Tăng bias phòng thủ
+
+                for (let d of directions) {
+                    // Check winLen sequence
+                    // Chỉ check nếu đủ chỗ
+                    if (
+                        r + d.r * (winLen-1) >= size || 
+                        c + d.c * (winLen-1) >= size ||
+                        r + d.r * (winLen-1) < 0 || 
+                        c + d.c * (winLen-1) < 0
+                    ) continue;
+
+                    let count = 0;
+                    let blocked = 0;
+                    
+                    // Check previous cell (blocker)
+                    let pr = r - d.r, pc = c - d.c;
+                    if (pr >=0 && pr < size && pc >=0 && pc < size && simBoard[pr*size+pc] !== '' && simBoard[pr*size+pc] !== simBoard[idx]) {
+                        blocked++;
+                    }
+
+                    for(let k=0; k<winLen; k++) {
+                        let nr = r + k*d.r;
+                        let nc = c + k*d.c;
+                        if (simBoard[nr*size+nc] === simBoard[idx]) count++;
+                        else if (simBoard[nr*size+nc] !== '') {
+                            // Blocked mid-way (should break loop logic differently but keeping simple heuristic)
+                            count = 0; break; 
+                        } else {
+                            break; // Empty cell
+                        }
+                    }
+                    
+                    // Check next cell (blocker)
+                    let nr = r + count*d.r, nc = c + count*d.c;
+                    if (nr >=0 && nr < size && nc >=0 && nc < size && simBoard[nr*size+nc] !== '' && simBoard[nr*size+nc] !== simBoard[idx]) {
+                        blocked++;
+                    }
+
+                    if (blocked === 2) continue; // Bị chặn 2 đầu -> vô dụng
+
+                    // Scoring
+                    if (count === winLen) score += 10000 * point;
+                    else if (count === winLen - 1) score += 500 * point;
+                    else if (count === winLen - 2) score += 50 * point;
+                }
+            }
+        }
+        return score;
+    }
+
+    function getCandidateMoves(simBoard) {
+        const size = SETTINGS.size;
+        const candidates = new Set();
+        const taken = [];
+        
+        for(let i=0; i<simBoard.length; i++) {
+            if(simBoard[i] !== '') taken.push(i);
+        }
+        
+        if(taken.length === 0) return [Math.floor((size*size)/2)];
+
+        const dirs = [-1, 1, -size, size, -size-1, -size+1, size-1, size+1];
+
+        for (let idx of taken) {
+            let r = Math.floor(idx / size);
+            let c = idx % size;
+            for(let d of dirs) {
+                let nIdx = idx + d;
+                let nr = Math.floor(nIdx / size);
+                let nc = nIdx % size;
+                
+                if(nIdx >= 0 && nIdx < size*size && Math.abs(nr - r) <= 1 && Math.abs(nc - c) <= 1) {
+                    if(simBoard[nIdx] === '') candidates.add(nIdx);
+                }
+            }
+        }
+        return Array.from(candidates);
+    }
+
+    function checkWin(currentBoard, player) {
+        const size = SETTINGS.size;
+        const winLen = SETTINGS.winLength;
+        const directions = [1, size, size+1, size-1];
+
+        for (let i = 0; i < size * size; i++) {
+            if (currentBoard[i] !== player) continue;
+
+            let r = Math.floor(i / size);
+            let c = i % size;
+
+            for (let dir of directions) {
+                let line = [i];
+                let win = true;
+
+                for (let k = 1; k < winLen; k++) {
+                    let nextIdx = i + k * dir;
+                    let nr = Math.floor(nextIdx / size);
+                    let nc = nextIdx % size;
+
+                    if (dir === 1 && nr !== r) win = false; 
+                    else if (dir === size - 1 && Math.abs(nc - c) !== k) win = false; 
+                    else if (dir === size + 1 && Math.abs(nc - c) !== k) win = false; 
+                    
+                    if (!win || nextIdx < 0 || nextIdx >= size*size || currentBoard[nextIdx] !== player) {
+                        win = false;
+                        break;
+                    }
+                    line.push(nextIdx);
+                }
+
+                if (win) return { winner: player, line: line };
+            }
+        }
+        return null;
+    }
+
+    // Start show intro
+    showIntro();
+
+</script>
+</body>
+</html>
